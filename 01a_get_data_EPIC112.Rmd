@@ -1,0 +1,164 @@
+---
+title: "Read in and NOMAS EPIC112 DNA methylation data"
+author: 
+  - David lukacsovich^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: lumen
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline    
+---
+
+# Set Up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r library}
+suppressMessages({
+  library(dplyr)
+  library(tidyr)
+  library(minfi)
+  library(wateRmelon)
+  library(SummarizedExperiment)
+})
+
+base_dir <- "~/TBL Dropbox/David Lukacsovich"
+analysis_dir <- file.path(base_dir, "AD_CR_NOMAS")
+data_dir <- file.path(analysis_dir, "data/DNAm") 
+raw_dir <- file.path(data_dir, "raw")
+process_dir <- file.path(data_dir, "processed")
+pheno_dir <- file.path(analysis_dir, "data", "Phenotype", "processed")
+```
+
+# Read Data
+
+## Get Phenotype
+
+```{r load_pheno}
+pheno_df <- read.csv(file.path(pheno_dir, "Raw_Metadata_EPIC112.csv"))
+```
+
+## Get RGSet Data
+
+```{r load_rgset}
+RGSet <- readRDS(file.path(raw_dir, "RGSet_EPIC112.RDS"))
+```
+
+## Create SummarizedExperiment
+
+```{r create_dnam}
+RGSet <- RGSet[,pheno_df$barcode]
+colnames(RGSet) <- pheno_df$Sample_Name
+row.names(pheno_df) <- pheno_df$Sample_Name
+dnam_data <- SummarizedExperiment::SummarizedExperiment(
+  assays = list(dnam = RGSet),
+  rowData = NULL,
+  colData = pheno_df
+)
+```
+
+# Add Annotation
+
+## Get Bisulfite Scores
+
+```{r pred_bisulfite}
+dnam_data$Bisulfite <- wateRmelon::bscon(
+  SummarizedExperiment::assays(dnam_data)$dnam
+)
+```
+
+## Get Gender Prediction
+
+```{r pred_gender}
+assay_genome <- minfi::mapToGenome(
+  SummarizedExperiment::assays(dnam_data)$dnam
+)
+assay_sex <- minfi::getSex(assay_genome)
+
+pheno_df <- dnam_data %>%
+  SummarizedExperiment::colData() %>%
+  as.data.frame()
+pheno_df$Gender_predicted <- ifelse(
+  assay_sex$predictedSex %in% c("M", "Male", "MALE"), "M", "F"
+)
+pheno_df <- pheno_df %>%
+  dplyr::mutate(
+    Gender = ifelse(is.na(.data$Gender), .data$Gender_predicted, .data$Gender)
+  ) %>%
+  dplyr::mutate(
+    Gender_match = ifelse(.data$Gender == .data$Gender_predicted, "Yes", "No")
+  )
+dnam_data$Gender <- pheno_df$Gender
+dnam_data$Gender_predicted <- pheno_df$Gender_predicted
+dnam_data$Gender_match <- pheno_df$Gender_match
+```
+
+# Filter Samples
+
+## Identify Samples to Filter
+
+```{r match_filter}
+pheno_df <- dnam_data %>%
+  SummarizedExperiment::colData() %>%
+  as.data.frame()
+message("There are ", nrow(pheno_df), " total Patients")
+
+pheno_df <- pheno_df %>%
+  dplyr::filter(.data$subject == "study_subject")
+message(nrow(pheno_df), " Patients are not from households")
+
+pheno_df <- pheno_df %>%
+  dplyr::filter(.data$Hispanic == 1)
+message(nrow(pheno_df), " Patients are Hispanic")
+
+batch_counts <- table(pheno_df$batch)
+batches <- names(batch_counts)[batch_counts >= 10]
+pheno_df <- pheno_df %>%
+  dplyr::filter(.data$batch %in% batches)
+message(nrow(pheno_df), " Patients belong to batches with at least n = 10 samples")
+
+pheno_df <- pheno_df %>%
+  dplyr::filter(.data$Gender_match == "Yes")
+message(nrow(pheno_df), " Patients have genders predicted correctly")
+
+pheno_df <- pheno_df %>%
+  dplyr::filter(.data$Bisulfite >= 85)
+message(nrow(pheno_df), " Patients have bisulfite >= 85%")
+```
+
+## Filter Data
+
+```{r filter}
+dnam_data <- dnam_data[,pheno_df$Sample_Name]
+```
+
+# Save
+
+## Save Full
+
+```{r save}
+saveRDS(dnam_data, file = file.path(process_dir, "DNAm_Data_EPIC112.RDS"))
+```
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r session}
+sessionInfo()
+```
+</details>

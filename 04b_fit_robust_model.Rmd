@@ -1,0 +1,643 @@
+---
+title: "Fit robust linear model"
+subtitle: "Fit a robust linear model to find probe significances"
+author: 
+  - David lukacsovich^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: lumen
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline    
+---
+
+# Set Up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r library}
+suppressMessages({
+  library(dplyr)
+  library(Harman)
+  library(plyr)
+  library(minfi)
+  library(SummarizedExperiment)
+  library(doParallel)
+  if (Sys.info()["sysname"] == "Windows") {
+    library(parallel)
+  }
+  library(stats)
+  library(bacon)
+  library(MASS)
+})
+
+base_dir <- "~/TBL Dropbox/David Lukacsovich"
+analysis_dir <- file.path(base_dir, "AD_CR_NOMAS")
+data_dir <- file.path(analysis_dir, "data/DNAm/processed")
+result_dir <- file.path(analysis_dir, "analysis-results")
+ancestry_dir <- file.path(result_dir, "ancestry")
+reference_dir <- file.path(analysis_dir, "data/ref_files")
+```
+
+# Define Functions
+
+## Read Data
+
+```{r func_read}
+read_dnam <- function(dataset) {
+  dnam_data <- readRDS(file.path(data_dir, paste0(dataset, "_aha8.RDS")))
+  dnam_data
+}
+
+get_ancestry_pc <- function(dataset) {
+  df <- read.table(
+    file = file.path(ancestry_dir, paste0(dataset, "_result.epistructure.pcs.txt")),
+    header = FALSE,
+    sep = "\t",
+    skip = 0
+  )
+  
+  colnames(df) <- c("Sample_Name", paste0("APC_", 1:(ncol(df)-1)))
+  
+  df
+}
+
+get_dataset_data <- function(dataset) {
+  ancest_df <- get_ancestry_pc(dataset)
+  dnam_data <- read_dnam(dataset)
+  
+  ancest_df <- ancest_df[match(dnam_data$Sample_Name, ancest_df$Sample_Name),]
+  
+  dnam_data$APC_1 <- ancest_df$APC_1
+  dnam_data$APC_2 <- ancest_df$APC_2
+  dnam_data$APC_3 <- ancest_df$APC_3
+  dnam_data$APC_4 <- ancest_df$APC_4
+  dnam_data$APC_5 <- ancest_df$APC_5
+  
+  dnam_data
+}
+```
+
+## Annotations
+
+```{r}
+get_nasser_data <- function() {
+  celltypes <- readxl::read_xlsx(
+    file.path(reference_dir, "Nassser study selected biosamples.xlsx"),
+    col_names = FALSE
+  ) %>%
+    dplyr::pull(1)
+  df <- readr::read_tsv(
+    file.path(
+      reference_dir, 
+      "AllPredictions.AvgHiC.ABC0.015.minus150.ForABCPaperV3.txt.gz"
+    )
+  ) %>%
+    dplyr::filter(.data$CellType %in% celltypes) %>%
+    dplyr::filter(!.data$isSelfPromoter)  %>% 
+    dplyr::filter(.data$class != "promoter") %>%
+    dplyr::select(
+      seqnames = "chr",
+      "start",
+      "end",
+      celltype = "CellType"
+    ) %>%
+    dplyr::distinct()
+  
+  df
+}
+
+get_hg19_positions <- function() {
+  minfi_object <- utils::data(
+    "IlluminaHumanMethylationEPICanno.ilm10b4.hg19",
+    package = "IlluminaHumanMethylationEPICanno.ilm10b4.hg19"
+  )
+  anno_df <- minfi::getAnnotation(minfi_object) %>%
+    as.data.frame() %>%
+    dplyr::select(
+      CpG = "Name",
+      seqnames = "chr",
+      start = "pos",
+      end = "pos"
+    )
+  
+  anno_df
+}
+
+get_nasser_annotation <- function() {
+  nasser_df <- get_nasser_data()
+  anno_df <- get_hg19_positions()
+  
+  nasser_gr <- nasser_df %>%
+    GenomicRanges::makeGRangesFromDataFrame()
+  anno_gr <- anno_df %>%
+    GenomicRanges::makeGRangesFromDataFrame()
+  
+  hits_df <- findOverlaps(anno_gr + 250, nasser_gr) %>%
+    as.data.frame()
+  
+  anno_df <- data.frame(
+    CpG = anno_df$CpG[hits_df$queryHits],
+    CellType = nasser_df$celltype[hits_df$subjectHits]
+  ) %>%
+    dplyr::distinct() %>%
+    dplyr::group_by(.data$CpG) %>%
+    dplyr::summarise(CellType = paste0(.data$CellType, collapse = ";")) %>%
+    dplyr::ungroup()
+  
+  anno_df
+}
+
+get_stored_annotations <- function(dnam_data) {
+  row_df <- dnam_data %>%
+    SummarizedExperiment::rowData() %>%
+    as.data.frame() %>%
+    dplyr::mutate(
+      CrossHybridize = as.integer(.data$filter_crosshyb),
+      nearSNP = as.integer(.data$filter_snp)
+    ) %>%
+    dplyr::select(
+      CpG = "Name",
+      Chr = "seqnames",
+      Position = "pos",
+      "UCSC_RefGene_Name",
+      "UCSC_RefGene_Group",
+      "Relation_to_Island",
+      "CrossHybridize",
+      "nearSNP",
+      na_count = "missing_count"
+    )
+  
+  row_df
+}
+
+get_great_annotations <- function() {
+  great_df <- readRDS(file.path(reference_dir, "GREAT_EPIC.RDS")) %>%
+    dplyr::select(
+      CpG = "cpg", GREAT_annotation
+    )
+  
+  great_df
+}
+
+get_probe_annotations <- function(dnam_data) {
+  nasser_df <- get_nasser_annotation()
+  row_df <- get_stored_annotations(dnam_data)
+  great_df <- get_great_annotations()
+  
+  probe_df <- row_df %>%
+    dplyr::left_join(great_df, by = "CpG") %>%
+    dplyr::left_join(nasser_df, by = "CpG") %>%
+    dplyr::mutate(
+      nasser_is_enhancer = ifelse(is.na(.data$CellType), 0, 1)
+    ) %>%
+    tidyr::replace_na(list(CellType = "")) %>%
+    dplyr::select(
+      "CpG",
+      "Chr",
+      "Position",
+      "GREAT_annotation",
+      "UCSC_RefGene_Name",
+      "UCSC_RefGene_Group",
+      "Relation_to_Island",
+      "CrossHybridize",
+      "nearSNP",
+      nasser_enhancer_cell_type = "CellType",
+      "nasser_is_enhancer"
+    )
+  
+  probe_df
+}
+```
+
+## Parallelize
+
+```{r func_parallel}
+start_parallel <- function(parallel, cores) {
+  if (parallel &&
+      requireNamespace("doParallel", quietly = TRUE) &&
+      requireNamespace("parallel", quietly = TRUE)) {
+    if (Sys.info()["sysname"] == "Windows"){
+      cluster <- parallel::makeCluster(cores)
+      doParallel::registerDoParallel(cluster)
+    } else {
+      doParallel::registerDoParallel(cores)
+      cluster <- NULL
+    }
+  } else {
+    parallel = FALSE
+    cluster <- NULL
+  }
+
+  list(parallel = parallel, cluster = cluster)
+}
+
+stop_parallel <- function(parallel, cluster) {
+  if (parallel &&
+      requireNamespace("doParallel", quietly = TRUE) &&
+      requireNamespace("parallel", quietly = TRUE)) {
+    doParallel::stopImplicitCluster()
+    if (is.null(cluster) && Sys.info()["sysname"] == "Windows") {
+      parallel::stopCluster(cluster)
+    }
+  }
+
+  TRUE
+}
+```
+
+## Association Test
+
+```{r func_assoc}
+run_lm_step <- function(m_value, pheno_df, test_var, formula) {
+  data <- data.frame(m_value = m_value, pheno_df)
+  lm_mod <- MASS::rlm(
+    formula,
+    data = data
+  )
+  
+  coef_tbl <- data.frame(summary(lm_mod)$coefficients)
+  df_resid <- nrow(data) - length(stats::coef(lm_mod))
+
+  t_vals <- coef_tbl[, "t.value"]
+  p_vals <- 2 * stats::pt(-abs(t_vals), df = df_resid)
+  z_vals = stats::qnorm(stats::pt(t_vals, df_resid))
+  
+  coef_df <- janitor::clean_names(coef_tbl) %>%
+    dplyr::mutate(
+      pvalue = p_vals,
+      z_value = z_vals,
+      df = df_resid
+    )
+  coef_df <- coef_df[grepl(test_var, rownames(coef_df)),]
+  
+  coef_df
+}
+
+run_lm_test <- function(M_mat, pheno_df, fo, test_var) {
+  parallel_res <- start_parallel(TRUE, 8)
+  do_parallel <- parallel_res$parallel
+  cluster <- parallel_res$cluster
+  
+  formula <- stats::as.formula(fo)
+  
+  results <- plyr::adply(
+    M_mat,
+    .margins = 1,
+    .fun = function(m_value){
+      run_lm_step(m_value, pheno_df, test_var, formula)
+    }, .parallel = do_parallel
+  )
+  
+  stop_parallel(do_parallel, cluster)
+  
+  results <- results %>%
+    dplyr::rename(
+      probe = "X1",
+      estimate = "value"
+    ) %>%
+    dplyr::mutate(
+      fdr = stats::p.adjust(.data$pvalue, method = "fdr")
+      )
+  
+  results
+}
+
+add_bacon_correction <- function(data) {
+  set.seed(23)
+  bc <- bacon::bacon(
+    teststatistics = NULL,
+    effectsizes =  data$estimate,
+    standarderrors = data$std_error,
+    na.exclude = TRUE,
+    priors = list(
+      sigma = list(alpha = 1.28,  beta = 0.36), 
+      mu = list(lambda = c(0, 3, -3), tau = c(1000, 100, 100)), 
+      epsilon = list(gamma = c(99, .5, .5))
+    )
+  )
+  
+  tvalue <- data$estimate / data$std_error
+  zvalue <- stats::qnorm(stats::pt(tvalue, data$df))
+  chisq <- zvalue ^ 2
+  inflation_base <- median(chisq,na.rm = TRUE) / qchisq(0.5, 1)
+  inflation_bacon <- bacon::inflation(bc)
+  bias_bacon <- bacon::bias(bc)
+  
+  inflation_effect <- c(
+    inflation_base = as.numeric(inflation_base),
+    inflation_bacon = as.numeric(inflation_bacon),
+    bias_bacon = as.numeric(bias_bacon)
+  )
+  
+  data_bacon <- data %>%
+    dplyr::mutate(
+      estimate_bacon = bacon::es(bc),
+      std_error_bacon = bacon::se(bc),
+      pvalue_bacon = bacon::pval(bc)
+    ) %>%
+    dplyr::mutate(
+      fdr_bacon = stats::p.adjust(.data$pvalue_bacon, method = "fdr")
+    )
+
+  set.seed(42)
+  bc2 <- bacon::bacon(
+    teststatistics = NULL,
+    effectsizes = data_bacon$estimate_bacon,
+    standarderrors = data_bacon$std_error_bacon,
+    na.exclude = TRUE,
+    priors = list(
+      sigma = list(alpha = 1.28,  beta = 0.36), 
+      mu = list(lambda = c(0, 3, -3), tau = c(1000, 100, 100)), 
+      epsilon = list(gamma = c(99, .5, .5))
+    )
+  )
+  
+  tvalue <- data_bacon$estimate_bacon / data_bacon$std_error_bacon
+  zvalue <- stats::qnorm(stats::pt(tvalue, data$df))
+  chisq <- zvalue ^ 2
+  inflation_correction <- median(chisq,na.rm = TRUE)/qchisq(0.5, 1)
+  inflation_bacon_correction <- bacon::inflation(bc2)
+  bias_bacon_correction <- bacon::bias(bc2)
+  
+  inflation_effect <- c(
+    inflation_original = as.numeric(inflation_base),
+    inflation_bacon = as.numeric(inflation_bacon),
+    bias_bacon = as.numeric(bias_bacon),
+    inflation_correction = as.numeric(inflation_correction),
+    inflation_bacon_correction = as.numeric(inflation_bacon_correction),
+    bias_bacon_correction = as.numeric(bias_bacon_correction)
+  )
+  
+  list(data = data_bacon, inflation_effect = inflation_effect)
+}
+```
+
+## Meta Analysis
+
+```{r func_meta}
+get_direction <- function(estimate) {
+  ifelse(
+    is.na(estimate) | (estimate == 0),
+    ".",
+    ifelse(estimate > 0, "+", "-")
+  )
+}
+
+get_meta <- function(stats_df, datasets) {
+  parallel_res <- start_parallel(TRUE, 8)
+  do_parallel <- parallel_res$parallel
+  cluster <- parallel_res$cluster
+  
+  meta_df <- plyr::adply(
+    .data = stats_df, 
+    .margins = 1, 
+    .fun =  function(region_data){
+      
+      est <- region_data[paste(datasets, "estimate_bacon", sep = "_")] %>%
+        as.numeric()
+      
+      direction <- paste0(get_direction(est), collapse = "")
+    
+      se <- region_data[paste(datasets, "std_error_bacon", sep = "_")] %>%
+        as.numeric()
+      
+      region_df <- data.frame(
+        cohort = datasets,
+        est = est,
+        se = se,
+        stringsAsFactors = FALSE
+      )
+      
+      set.seed(23)
+      f <- meta::metagen(
+        TE = est,
+        seTE = se,
+        data = region_df
+      )
+      
+      result <- tibble::tibble(
+        META_estimate_bacon = f$TE.fixed,
+        META_standard_error_bacon = f$seTE.fixed,
+        META_pvalue_fixed_bacon = f$pval.fixed,
+        META_pvalue_q = f$pval.Q,
+        direction = direction
+      )
+      
+      result
+    }  , .progress = "time",
+    .parallel = do_parallel,
+    .id = NULL
+  )
+  
+  stop_parallel(do_parallel, cluster)
+    
+  meta_df %>%
+    dplyr::mutate(
+      META_fdr = p.adjust(.data$META_pvalue_fixed_bacon, method = "fdr"),
+      META_direction_bacon = .data$direction
+    ) %>%
+    dplyr::select(-"direction")
+}
+```
+
+## Wrapper Function
+
+```{r func_wrapper}
+run_association <- function(
+    dnam_data,
+    test_var = "aha8_zscore",
+    adjust_ancestry = FALSE
+) {
+  beta_vals <- SummarizedExperiment::assays(dnam_data)$dnam
+  beta_vals <- Harman::shiftBetas(beta_vals, shiftBy = 1e-4)
+  M_mat <- minfi::logit2(beta_vals)
+  pheno_df <- as.data.frame(SummarizedExperiment::colData(dnam_data)) %>%
+    dplyr::rename(
+      aha8_score = as.name(test_var)
+    ) %>%
+    dplyr::mutate(
+      aha8_score = as.numeric(.data$aha8_score),
+      age_at_visit = as.numeric(.data$age_at_visit),
+      Gender = as.character(.data$Gender),
+      apoe4 = as.numeric(.data$apoe4),
+      B = as.numeric(.data$B),
+      NK = as.numeric(.data$NK),
+      CD4T = as.numeric(.data$CD4T),
+      CD8T = as.numeric(.data$CD8T),
+      Mono = as.numeric(.data$Mono),
+      Neutro = as.numeric(.data$Neutro),
+      Eosino = as.numeric(.data$Eosino),
+      APC_1 = as.numeric(.data$APC_1),
+      APC_2 = as.numeric(.data$APC_2),
+      APC_3 = as.numeric(.data$APC_3)
+    ) %>%
+    dplyr::mutate(
+      Gran = .data$Neutro + .data$Eosino
+    )
+  
+  to_keep <- (!is.na(pheno_df$aha8_score)) &
+    (!is.na(pheno_df$apoe4))
+  M_mat <- M_mat[,to_keep]
+  pheno_df <- pheno_df[to_keep,]
+  
+  fo <- paste(
+    c(
+      "m_value ~ aha8_score",
+      "age_at_visit",
+      "Gender",
+      "apoe4",
+      "B",
+      "NK",
+      "CD4T",
+      "Mono",
+      "Gran"
+    ),
+    collapse = " + "
+  )
+  
+  if (adjust_ancestry) {
+    fo <- paste0(
+      c(fo, "APC_1", "APC_2", "APC_3"),
+      collapse = " + "
+    )
+  }
+
+  run_lm_test(M_mat, pheno_df, fo, "aha8_score")
+}
+
+get_association_statistics <- function(
+    dnam_data,
+    label = "",
+    adjust_ancestry = FALSE
+) {
+  row_df <- dnam_data %>%
+    SummarizedExperiment::rowData() %>%
+    as.data.frame() %>%
+    dplyr::select(probe = "Name", na_count = "missing_count")
+  
+  stats_df <- run_association(
+    dnam_data,
+    test_var = "aha8_zscore",
+    adjust_ancestry = adjust_ancestry
+  )
+  
+  stats_df <- row_df %>%
+    dplyr::left_join(stats_df, by = "probe")
+  
+  res <- add_bacon_correction(stats_df)
+  
+  stats_df <- res$data
+  
+  if (nchar(label) > 0) {
+    columns <- colnames(stats_df)
+    columns <- c(
+      columns[[1]],
+      paste(label, columns[2:ncol(stats_df)], sep = "_")
+    )
+  
+    colnames(stats_df) <- columns
+    
+    res$data <- stats_df
+  }
+  
+  res
+}
+
+run_robust_model_analysis <- function(
+    dnam_112_data,
+    dnam_208_data,
+    adjust_ancestry = FALSE
+) {
+  
+  res_112 <- get_association_statistics(
+    dnam_112_data,
+    label = "EPIC112",
+    adjust_ancestry = adjust_ancestry
+  )
+  res_208 <- get_association_statistics(
+    dnam_208_data, 
+    label = "EPIC208",
+    adjust_ancestry = adjust_ancestry
+  )
+  
+  inflation_df <- data.frame(
+    labels = names(res_112$inflation_effect),
+    epic_112 = as.numeric(res_112$inflation_effect),
+    epic_208 = as.numeric(res_208$inflation_effect)
+  )
+  
+  stats_df <- res_112$data %>%
+    dplyr::inner_join(res_208$data, by = "probe")
+  
+  stats_df <- get_meta(stats_df, c("EPIC112", "EPIC208"))
+  
+  annot_df <- get_probe_annotations(dnam_112_data)
+  
+  stats_df <- annot_df %>%
+    dplyr::right_join(stats_df, by = c("CpG" = "probe"))
+  
+  if (adjust_ancestry) {
+    save_dir <- file.path(result_dir, "robust_linear_model_adj_ancestry")
+  } else {
+    save_dir <- file.path(result_dir, "robust_linear_model")
+  }
+  
+  write.csv(
+    inflation_df,
+    file = file.path(
+      save_dir, "aha8_inflation.csv"
+    ),
+    row.names = FALSE
+  )
+
+  write.csv(
+    stats_df,
+    file = file.path(
+      save_dir, "aha8_stats.csv"
+    ),
+    row.names = FALSE
+  )
+}
+```
+
+# Run Associations
+
+## Read Data
+
+```{r get_data}
+dnam_112_data <- get_dataset_data("EPIC112")
+dnam_208_data <- get_dataset_data("EPIC208")
+```
+
+## Run
+
+```{r assoc_run}
+run_robust_model_analysis(dnam_112_data, dnam_208_data, adjust_ancestry = FALSE)
+```
+
+```{r assoc_run2}
+run_robust_model_analysis(dnam_112_data, dnam_208_data, adjust_ancestry = TRUE)
+```
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r session}
+sessionInfo()
+```
+</details>

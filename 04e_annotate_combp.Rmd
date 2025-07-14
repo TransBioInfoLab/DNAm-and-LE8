@@ -1,0 +1,267 @@
+---
+title: "Annotate combp results"
+author: 
+  - David lukacsovich^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: lumen
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline    
+---
+
+# Set Up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r library}
+suppressMessages({
+  library(dplyr)
+  library(readxl)
+  library(rGREAT)
+  library(GenomicRanges)
+  library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+  library(org.Hs.eg.db)
+  library(AnnotationDbi)
+  library(BiocGenerics)
+})
+
+base_dir <- "~/TBL Dropbox/David Lukacsovich"
+analysis_dir <- file.path(base_dir, "AD_CR_NOMAS")
+result_dir <- file.path(analysis_dir, "analysis-results")
+combp_dir <- file.path(analysis_dir, "Mike")
+save_dir <- file.path(result_dir, "robust_linear_model_adj_ancestry")
+```
+
+# Load Data
+
+```{r load}
+stats_df <- read.csv(file = file.path(save_dir, "aha8_stats.csv")) %>%
+  dplyr::select(
+    cpg = "CpG",
+    chr = "Chr",
+    position = "Position",
+    estimate = "META_estimate_bacon",
+    pvalue = "META_pvalue_fixed_bacon",
+    "UCSC_RefGene_Group",
+    "UCSC_RefGene_Name",
+    "Relation_to_Island"
+  ) %>%
+  dplyr::mutate(
+    direction = ifelse(.data$estimate > 0, "+", "-"),
+    index = dplyr::row_number()
+  )
+
+combp_df <- readxl::read_excel(path = file.path(combp_dir, "cnew.regions-p.bed.xlsx")) %>%
+  dplyr::rename(chr = `#chrom`) %>%
+  dplyr::mutate(chr = paste0("chr", .data$chr)) %>%
+  dplyr::filter(.data$z_sidak_p < 0.05) %>%
+  dplyr::mutate(index = dplyr::row_number())
+```
+
+# Associate CpGs to DMRs
+
+```{r}
+filter_collapse <- function(annotation_data, collapse = ";") {
+  annotation_data <- annotation_data[annotation_data != ""]
+  
+  if (length(annotation_data) == 0) {
+    return("")
+  }
+  
+  paste0(annotation_data, collapse = collapse)
+}
+
+combp_gr <- combp_df %>%
+  GenomicRanges::makeGRangesFromDataFrame(
+    start.field = "start", 
+    end.field = "end", 
+    seqnames.field = "chr"
+  )
+
+stats_gr <- stats_df %>%
+  GenomicRanges::makeGRangesFromDataFrame(
+    start.field = "position", 
+    end.field = "position", 
+    seqnames.field = "chr"
+  )
+
+overlap_df <- GenomicRanges::findOverlaps(combp_gr, stats_gr) %>%
+  as.data.frame() %>%
+  dplyr::left_join(
+    stats_df %>%
+      dplyr::select(
+        "cpg",
+        "UCSC_RefGene_Group",
+        "UCSC_RefGene_Name",
+        "Relation_to_Island",
+        "direction",
+        "index"
+      ),
+    by = c("subjectHits" = "index")
+  )
+
+target_df <- overlap_df %>%
+  dplyr::group_by(.data$queryHits) %>%
+  dplyr::summarise(
+    nprobes = n(),
+    direction_cpgs = paste0(.data$direction, collapse = ""),
+    directions = paste0(unique(.data$direction), collapse = ""),
+    combp_probes = paste0(.data$cpg, collapse = ","),
+    UCSC_RefGene_Group = filter_collapse(.data$UCSC_RefGene_Group, collapse = ";"),
+    UCSC_RefGene_Name = filter_collapse(.data$UCSC_RefGene_Name, collapse = ";"),
+    Relation_to_Island = filter_collapse(.data$Relation_to_Island, collapse = ";")
+  ) %>%
+  dplyr::filter(
+    .data$directions %in% c("-", "+"),
+    .data$nprobes >= 3
+  ) %>%
+  dplyr::select(
+    index = "queryHits",
+    "nprobes",
+    "direction_cpgs",
+    "combp_probes",
+    "UCSC_RefGene_Group",
+    "UCSC_RefGene_Name",
+    "Relation_to_Island"
+  )
+
+result_df <- combp_df %>%
+  dplyr::mutate(
+    DMR = paste0(.data$chr, ":", .data$start, "-", .data$end)
+  ) %>%
+  dplyr::right_join(target_df, by = "index") %>%
+  dplyr::select(
+    "DMR",
+    nProbes = "nprobes",
+    pValue = "z_p",
+    Sidak_P = "z_sidak_p",
+    direction_CpGs = "direction_cpgs",
+    "combp_probes",
+    "UCSC_RefGene_Group",
+    "UCSC_RefGene_Name",
+    "Relation_to_Island",
+    "chr",
+    "start",
+    "end"
+  )
+```
+
+# Get GREAT Annotation
+
+```{r}
+result_gr <- result_df %>%
+  GenomicRanges::makeGRangesFromDataFrame(
+    start.field = "start", 
+    end.field = "end", 
+    seqnames.field = "chr"
+  )
+
+# Submit the GREAT job and retrieve gene associations
+job <- rGREAT::submitGreatJob(result_gr, genome = "hg38")
+regionsToGenes_gr <- rGREAT::getRegionGeneAssociations(job)
+regionsToGenes_df <- as.data.frame(regionsToGenes_gr)
+  
+# Create annotation strings for each region
+GREAT_annotation <- lapply(seq_len(length(regionsToGenes_df$annotated_genes)), function(i) {
+  g <- ifelse(regionsToGenes_df$dist_to_TSS[[i]] > 0,
+              paste0(regionsToGenes_df$annotated_genes[[i]], " (+", regionsToGenes_df$dist_to_TSS[[i]], ")"),
+              paste0(regionsToGenes_df$annotated_genes[[i]], " (", regionsToGenes_df$dist_to_TSS[[i]], ")"))
+  paste0(g, collapse = ";")
+})
+  
+  # Select key columns from GREAT output and combine with the annotation strings
+great_df <- regionsToGenes_df %>%
+  dplyr::select("seqnames", "start", "end") %>%
+  dplyr::mutate(GREAT_annotation = unlist(GREAT_annotation))
+
+result_df <- result_df %>%
+  dplyr::left_join(great_df, by = c("chr" = "seqnames", "start", "end"))
+```
+
+# Get TSS Annotation
+
+```{r}
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene::TxDb.Hsapiens.UCSC.hg38.knownGene
+genes_gr <- GenomicFeatures::genes(txdb, single.strand.genes.only = TRUE)
+tss_gr <- GenomicRanges::resize(genes_gr, width = 1, fix = "start")
+
+result_gr <- result_df %>%
+  GenomicRanges::makeGRangesFromDataFrame(
+    start.field = "start", 
+    end.field = "end", 
+    seqnames.field = "chr"
+  )
+
+nearest_idx <- GenomicRanges::nearest(result_gr, tss_gr)
+nearest_tss <- tss_gr[nearest_idx]
+
+gene_ids <- names(genes_gr)[nearest_idx]
+gene_symbols <- AnnotationDbi::mapIds(
+  org.Hs.eg.db::org.Hs.eg.db,
+  keys = gene_ids,
+  column = "SYMBOL",
+  keytype = "ENTREZID",
+  multiVals = "first"
+)
+
+dist_df <- data.frame(
+  TSS_gene = gene_symbols,
+  TSS_position = BiocGenerics::start(nearest_tss),
+  TSS_distance = abs(
+    BiocGenerics::start(result_gr) - BiocGenerics::start(nearest_tss)
+  )
+)
+
+result_df <- cbind(result_df, dist_df)
+```
+
+# Save
+
+```{r}
+result_df <- result_df %>%
+  dplyr::select(
+    "DMR",
+    "nProbes",
+    "pValue",
+    "Sidak_P",
+    "direction_CpGs",
+    "combp_probes",
+    "GREAT_annotation",
+    "TSS_gene",
+    "TSS_position",
+    "TSS_distance",
+    "UCSC_RefGene_Group",
+    "UCSC_RefGene_Name",
+    "Relation_to_Island"
+  )
+
+write.csv(
+  result_df,
+  file = file.path(save_dir, "combp_results_annotated.csv"),
+  row.names = FALSE
+)
+```
+
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r session}
+sessionInfo()
+```
+</details>

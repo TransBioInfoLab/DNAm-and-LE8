@@ -1,0 +1,371 @@
+---
+title: "Get data for fitting a robust model"
+subtitle: "Filter out samples with missing aha8_total scores, or that have reached dimentia, and add cell type proportion PCs"
+author: 
+  - David lukacsovich^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: lumen
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline    
+---
+
+# Set Up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r library}
+suppressMessages({
+  library(dplyr)
+  library(recountmethylation)
+  library(SummarizedExperiment)
+})
+
+base_dir <- "~/TBL Dropbox/David Lukacsovich"
+analysis_dir <- file.path(base_dir, "AD_CR_NOMAS")
+data_dir <- file.path(analysis_dir, "data/DNAm/processed")
+result_dir <- file.path(analysis_dir, "analysis-results")
+ancestry_dir <- file.path(result_dir, "ancestry")
+glint_dir <- file.path(analysis_dir, "code", "GLINT_1.0.4")
+```
+
+## Read in Data
+
+```{r get_data}
+dnam_112_data <- readRDS(file.path(data_dir, "EPIC112_Batched_PCA.RDS"))
+dnam_208_data <- readRDS(file.path(data_dir, "EPIC208_Batched_PCA.RDS"))
+```
+
+# Get Parameters
+
+## Filter Data
+
+```{r filt}
+message(
+  "There are ",
+  ncol(dnam_112_data), " EPIC112 samples, and ",
+  ncol(dnam_208_data), " EPIC208 samples."
+)
+
+dnam_112_data <- dnam_112_data[,!is.na(dnam_112_data$aha8_total)]
+dnam_208_data <- dnam_208_data[,!is.na(dnam_208_data$aha8_total)]
+message(
+  "After filtering samples with missing aha8_total values, there are ",
+  ncol(dnam_112_data), " EPIC112 samples, and ",
+  ncol(dnam_208_data), " EPIC208 samples."
+)
+
+dnam_112_data <- dnam_112_data[,!is.na(dnam_112_data$apoe4)]
+dnam_208_data <- dnam_208_data[,!is.na(dnam_208_data$apoe4)]
+message(
+  "After filtering samples with missing apoe4 values, there are ",
+  ncol(dnam_112_data), " EPIC112 samples, and ",
+  ncol(dnam_208_data), " EPIC208 samples."
+)
+```
+
+## Calculate aha8 and time difference parameters
+
+```{r}
+dnam_112_data$aha8_zscore <- scale(
+  dnam_112_data$aha8_total, center = TRUE, scale = TRUE
+)
+dnam_208_data$aha8_zscore <- scale(
+  dnam_208_data$aha8_total, center = TRUE, scale = TRUE
+)
+
+dnam_112_data$diff_time <- dnam_112_data$age_at_visit - dnam_112_data$np1age
+dnam_208_data$diff_time <- dnam_208_data$age_at_visit - dnam_208_data$np1age
+```
+
+# Get Celltype PCA
+
+## Define Functions
+
+```{r func_pca}
+get_dnam_pca <- function(dnam_data) {
+  pheno_df <- dnam_data %>%
+    SummarizedExperiment::colData() %>%
+    as.data.frame() %>%
+    dplyr::select(
+      "B", "NK", "CD4T", "CD8T", "Mono", "Neutro", "Eosino"
+    )
+  
+  pc_vals <- stats::prcomp(pheno_df, center = TRUE, scale = TRUE)
+  
+  pc_vals
+}
+
+get_pca_statistics <- function(pc_vals) {
+  list(
+    pc1_mean = mean(pc_vals$x[,1]),
+    pc2_mean = mean(pc_vals$x[,2]),
+    pc3_mean = mean(pc_vals$x[,3]),
+    pc1_sd = stats::sd(pc_vals$x[,1]),
+    pc2_sd = stats::sd(pc_vals$x[,2]),
+    pc3_sd = stats::sd(pc_vals$x[,3])
+  )
+}
+
+plot_dnam_pca <- function(pc_vals, title) {
+  plot_df <- data.frame(pc_vals$x[,1:3])
+  colnames(plot_df) <- paste0("PC", 1:3)
+  
+  percentVar <- round(100 * pc_vals$sdev ** 2 / sum(pc_vals$sdev ** 2), 1)
+  pca_params <- get_pca_statistics(pc_vals)
+  
+  outlier_cutoff <- 3
+  
+  p1 <- ggplot2::ggplot(
+    data = plot_df, mapping = ggplot2::aes(x = PC1, y = PC2)
+  ) +
+    ggplot2::geom_point(size = 1) +
+    ggplot2::theme_bw() +
+    ggplot2::xlab(paste0("PC1: ", percentVar[[1]], "% variance")) +
+    ggplot2::ylab(paste0("PC2: ", percentVar[[2]], "% variance")) +
+    ggplot2::geom_hline(
+      yintercept = pca_params$pc2_mean + outlier_cutoff * pca_params$pc2_sd,
+      linetype = "dashed"
+    ) +
+    ggplot2::geom_hline(
+      yintercept = pca_params$pc2_mean - outlier_cutoff * pca_params$pc2_sd,
+      linetype = "dashed"
+    ) +
+    ggplot2::geom_vline(
+      xintercept = pca_params$pc1_mean + outlier_cutoff * pca_params$pc1_sd,
+      linetype = "dashed"
+    ) +
+    ggplot2::geom_vline(
+      xintercept = pca_params$pc1_mean - outlier_cutoff * pca_params$pc1_sd,
+      linetype = "dashed"
+    ) +
+    ggplot2::ggtitle(title)
+  
+  p2 <- ggplot2::ggplot(
+    data = plot_df, mapping = ggplot2::aes(x = PC1, y = PC3)
+  ) +
+    ggplot2::geom_point(size = 1) +
+    ggplot2::theme_bw() +
+    ggplot2::xlab(paste0("PC1: ", percentVar[[1]], "% variance")) +
+    ggplot2::ylab(paste0("PC3: ", percentVar[[3]], "% variance")) +
+    ggplot2::geom_hline(
+      yintercept = pca_params$pc3_mean + outlier_cutoff * pca_params$pc3_sd,
+      linetype = "dashed"
+    ) +
+    ggplot2::geom_hline(
+      yintercept = pca_params$pc3_mean - outlier_cutoff * pca_params$pc3_sd,
+      linetype = "dashed"
+    ) +
+    ggplot2::geom_vline(
+      xintercept = pca_params$pc1_mean + outlier_cutoff * pca_params$pc1_sd,
+      linetype = "dashed"
+    ) +
+    ggplot2::geom_vline(
+      xintercept = pca_params$pc1_mean - outlier_cutoff * pca_params$pc1_sd,
+      linetype = "dashed"
+    ) +
+    ggplot2::ggtitle(title)
+  
+  list(p1 = p1, p2 = p2)
+}
+
+run_pca_analysis <- function(dnam_data, title) {
+  pc_vals <- get_dnam_pca(dnam_data)
+  percentVar <- round(100 * pc_vals$sdev ** 2 / sum(pc_vals$sdev ** 2), 1)
+  
+  dnam_data$CPC_1 <- pc_vals$x[,1]
+  dnam_data$CPC_2 <- pc_vals$x[,2]
+  dnam_data$CPC_3 <- pc_vals$x[,3]
+  
+  plot_ls <- plot_dnam_pca(pc_vals, title)
+  
+  list(dnam_data = dnam_data, p1 = plot_ls$p1, p2 = plot_ls$p2, percentVar = percentVar)
+}
+```
+
+## Get PCA
+
+```{r pca_run}
+res_112 <- run_pca_analysis(dnam_112_data, "EPIC112")
+dnam_112_data <- res_112$dnam_data
+
+res_208 <- run_pca_analysis(dnam_208_data, "EPIC208")
+dnam_208_data <- res_208$dnam_data
+
+message(
+  "The variance explained by the first 3 PCs is ",
+  sum(res_112$percentVar[1:3]), "% in EPIC112 and ",
+  sum(res_208$percentVar[1:3]), "% in EPIC208."
+)
+```
+
+## Plot PCA
+
+```{r plot, fig.height = 6, fig.width = 12}
+gridExtra::grid.arrange(res_112$p1, res_112$p2, ncol = 2)
+gridExtra::grid.arrange(res_208$p1, res_208$p2, ncol = 2)
+```
+
+# Save Filtered Data
+
+```{r save}
+saveRDS(dnam_112_data, file.path(data_dir, "EPIC112_aha8.RDS"))
+saveRDS(dnam_208_data, file.path(data_dir, "EPIC208_aha8.RDS"))
+```
+
+# Get Ancestry Predictions
+
+## Get target cpgs
+
+```{r get_cpgs}
+fname_path <- file.path(
+  system.file(package = "recountmethylation"),
+  "extdata", "glint_files", "glint_epistructure_explanatory-cpgs.rda"
+)
+cpgs_ls <- get(load(fname_path))
+```
+
+## Write EPIC112 Files
+
+```{r write_112}
+pheno_112_df <- dnam_112_data %>%
+  SummarizedExperiment::colData() %>%
+  as.data.frame() %>%
+  dplyr::select(
+    age = "age_at_visit",
+    sex = "Gender"
+  ) %>%
+  dplyr::mutate(
+    age = as.numeric(.data$age),
+    sex = ifelse(.data$sex == "M", 1, 0)
+  )
+
+beta_112 <- SummarizedExperiment::assays(dnam_112_data)$dnam
+beta_112 <- beta_112[row.names(beta_112) %in% cpgs_ls,]
+
+write.table(
+  pheno_112_df,
+  file = file.path(ancestry_dir, "EPIC112_covariate.txt"),
+  sep = "\t",
+  row.names = TRUE,
+  col.names = TRUE,
+  append = FALSE,
+  quote = FALSE
+)
+
+write.table(
+  beta_112,
+  file = file.path(ancestry_dir, "EPIC112_data.txt"),
+  sep = "\t",
+  row.names = TRUE,
+  col.names = TRUE,
+  append = FALSE,
+  quote = FALSE
+)
+```
+
+## Write EPIC208 Files
+
+```{r write_208}
+pheno_208_df <- dnam_208_data %>%
+  SummarizedExperiment::colData() %>%
+  as.data.frame() %>%
+  dplyr::select(
+    age = "age_at_visit",
+    sex = "Gender"
+  ) %>%
+  dplyr::mutate(
+    age = as.numeric(.data$age),
+    sex = ifelse(.data$sex == "M", 1, 0)
+  )
+
+beta_208 <- SummarizedExperiment::assays(dnam_208_data)$dnam
+beta_208 <- beta_208[row.names(beta_208) %in% cpgs_ls,]
+
+write.table(
+  pheno_208_df,
+  file = file.path(ancestry_dir, "EPIC208_covariate.txt"),
+  sep = "\t",
+  row.names = TRUE,
+  col.names = TRUE,
+  append = FALSE,
+  quote = FALSE
+)
+
+write.table(
+  beta_208,
+  file = file.path(ancestry_dir, "EPIC208_data.txt"),
+  sep = "\t",
+  row.names = TRUE,
+  col.names = TRUE,
+  append = FALSE,
+  quote = FALSE
+)
+```
+
+## Write Python Commands
+
+Writes a file called `Analysis_Commands.txt`. These commands can be run, in order, from the command terminal, to create the ancestry based pca.
+
+```{r write_commands}
+adjust_path <- function(file_path) {
+  gsub(" ","\\ ", file_path,fixed = TRUE)
+}
+
+glint.pypath <- file.path(glint_dir, "glint.py")
+command_112 <- paste0(
+  c("python", adjust_path(glint.pypath),
+    "--datafile", adjust_path(file.path(ancestry_dir, "EPIC112_data.txt")), 
+    "--covarfile", adjust_path(file.path(ancestry_dir, "EPIC112_covariate.txt")), 
+    "--covar", "age sex",
+    "--savepcs 10",
+    "--epi", "--out", adjust_path(file.path(ancestry_dir, "EPIC112_result"))
+  ), 
+  collapse = " "
+)
+
+command_208 <- paste0(
+  c("python", adjust_path(glint.pypath),
+    "--datafile", adjust_path(file.path(ancestry_dir, "EPIC208_data.txt")), 
+    "--covarfile", adjust_path(file.path(ancestry_dir, "EPIC208_covariate.txt")), 
+    "--covar", "age sex",
+    "--savepcs 10",
+    "--epi", "--out", adjust_path(file.path(ancestry_dir, "EPIC208_result"))
+  ), 
+  collapse = " "
+)
+
+commands <- c(
+  "conda activate glint_env",
+  command_112,
+  command_208,
+  "conda deactivate"
+)
+
+fileConn <- file(file.path(ancestry_dir, "Analysis_Commands.txt"))
+writeLines(commands, fileConn)
+close(fileConn)
+```
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r session}
+sessionInfo()
+```
+</details>

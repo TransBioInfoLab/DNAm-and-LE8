@@ -1,0 +1,271 @@
+---
+title: "Create Phenotype Information"
+subtitle: "Read in phenotype information, merge it together, and separate for each dataset"
+author: 
+  - David lukacsovich^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: lumen
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline    
+---
+
+# Set Up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r library}
+suppressMessages({
+  library(dplyr)
+  library(tidyr)
+})
+
+base_dir <- "~/TBL Dropbox/David Lukacsovich"
+analysis_dir <- file.path(base_dir, "AD_CR_NOMAS")
+pheno_dir <- file.path(analysis_dir, "data", "Phenotype")
+raw_dir <- file.path(pheno_dir, "raw")
+process_dir <- file.path(pheno_dir, "processed")
+```
+
+# Create Phenotypes
+
+## Get Clinical Data
+
+```{r}
+clinical_df <- read.csv(
+  file.path(raw_dir, "dementia adjudication/visit 2 dementia adjudication redcap/NOMASDementiaReviews_DATA_2022-04-25_0933.csv")
+) %>%
+  dplyr::select(
+    ID = "record_id",
+    "np1date",
+    "np1age",
+    "raceth",
+    "isex",
+    "edu", 
+    "mme1date",
+    "mmetot_1",
+    "np2age",
+    "mme2date",
+    "mmetot_2"
+  ) %>%
+  dplyr::mutate(ID = as.character(.data$ID))
+```
+
+## Get Age and Ethnicity
+
+```{r}
+bds_df <- read.csv(
+  file.path(raw_dir, "main columbia server/bds.csv")
+) %>%
+  dplyr::select(
+    "ID", 
+    baselineDate = "BDATE", # blood sample collection date
+    birthDate = "B1DATE", # birthday
+    age_at_visit = "AGE",
+    "RACE",
+    "ETHNIC"
+  ) %>%
+  dplyr::mutate(ID = as.character(.data$ID))
+```
+
+## APOE
+
+```{r}
+apoe_df <- read.csv(file.path(raw_dir, "labs/apoe/apoe.csv")) %>%
+  dplyr::select(
+    ID = "id",
+    "apoe"
+  ) %>% dplyr::mutate(
+    apoe4 = ifelse(
+      .data$apoe %in% c("2:4", "3:4"), 1, 
+      ifelse(.data$apoe %in% c("4:4"), 2, 0)
+    )
+  ) %>% 
+  dplyr::mutate(ID = as.character(.data$ID))
+```
+
+## Smoking status
+
+```{r}
+smoke_df <- read.csv(file.path(raw_dir, "main columbia server/rfa.csv")) %>%
+  dplyr::select("ID", "SMOKE") %>% 
+  dplyr::mutate(ID = as.character(.data$ID))
+```
+
+## Dementia
+
+```{r}
+dementia_df <- read.csv(
+  file.path(
+    raw_dir,
+    "dementia adjudication/all visit dementia adjudication findings",
+    "nomas_memory.csv"
+  )
+) %>%
+  dplyr::select(
+    "ID", 
+    "np1_cogdx",
+    "postMRIcogdxdate",
+    "postMRIcogdx",
+    "incident_dementia_date",
+    "incident_dementia",
+    "tt_dementia",
+  ) %>% 
+  dplyr::mutate(ID = as.character(.data$ID))
+```
+
+## Merge
+
+```{r}
+pheno_df <- clinical_df %>%
+  dplyr::left_join(bds_df, by = "ID") %>%
+  dplyr::left_join(apoe_df, by = "ID") %>%
+  dplyr::left_join(smoke_df, by = "ID") %>%
+  dplyr::left_join(dementia_df, by = "ID")
+```
+
+# Get Scores
+
+## LE8
+
+```{r}
+le8_df <- readxl::read_excel(
+  file.path(pheno_dir, "processed_LE8_related", "_DNAm_LE8_ALL_components.xlsx")
+) %>%
+  dplyr::select(-"batch") %>%
+  dplyr::rename(
+    aha8_bs = "aha8_bs_updated",
+    aha8_pa = "new_aha8_pa"
+  ) %>%
+  dplyr::mutate(ID = as.character(.data$ID))
+```
+
+##LS7
+
+```{r}
+ls7_df <- read.csv(file.path(raw_dir, "ls7 le8/icvh.csv")) %>% 
+  dplyr::mutate(ID = as.character(.data$ID))
+```
+
+## Merge
+
+```{r}
+pheno_df <- pheno_df %>%
+  dplyr::left_join(le8_df, by = "ID") %>%
+  dplyr::left_join(ls7_df, by = "ID")
+```
+
+# Get Household Information
+
+```{r}
+household_df <- readxl::read_excel(
+  file.path(pheno_dir, "processed_LE8_related", "DNAm-all-samples-include-household-members.xlsx")
+) %>%
+  dplyr::select(-"ETHNIC") %>%
+  dplyr::rename(sample_year = "batch") %>%
+  dplyr::mutate(
+    ID = as.character(.data$ID)
+  )
+
+pheno_df <- pheno_df %>%
+  dplyr::left_join(household_df, by = "ID") %>%
+  dplyr::mutate(
+    Hispanic = ifelse(.data$ETHNIC == 1, 1, 0)
+  )
+```
+
+```{r}
+pheno_df$test <- pheno_df$isex
+pheno_df$test[c(10, 100, 250, 500, 750)] <- NA
+
+test_df <- pheno_df %>%
+  dplyr::mutate(Gender = ifelse(.data$test == 0, "M", "F"))
+```
+
+
+# Get Dataset Information
+
+```{r}
+sample_208 <- read.csv(file.path(raw_dir, "EPIC208_samples.csv")) %>%
+  dplyr::rename(ID = "NOMASID") %>%
+  dplyr::mutate(ID = as.character(.data$ID))
+
+sample_112 <- read.csv(file.path(raw_dir, "EPIC112_samples.csv")) %>%
+  dplyr::rename(ID = "sample_local_ext_id") %>%
+  dplyr::mutate(ID = as.character(.data$ID))
+
+pheno_112_df <- sample_112 %>%
+  dplyr::left_join(pheno_df, by = "ID") %>%
+  dplyr::mutate(batch = .data$Sample_Plate) %>%
+  dplyr::mutate(
+    Gender = dplyr::case_when(
+      .data$isex == 0 ~ "F",
+      .data$isex == 1 ~ "M",
+      TRUE ~ NA
+    )
+  ) %>%
+  dplyr::mutate(
+    subject = ifelse(as.integer(.data$ID) > 8000, "household_member", "study_subject")
+  )
+
+pheno_208_df <- sample_208 %>%
+  dplyr::left_join(pheno_df, by = "ID") %>%
+  dplyr::mutate(batch = .data$Sample_Plate) %>%
+  dplyr::mutate(
+    Gender = dplyr::case_when(
+      .data$isex == 0 ~ "F",
+      .data$isex == 1 ~ "M",
+      TRUE ~ NA
+    )
+  ) %>%
+  dplyr::mutate(
+    subject = ifelse(as.integer(.data$ID) > 8000, "household_member", "study_subject")
+  )
+```
+
+```{r}
+pheno_208_df %>%
+  dplyr::select("ETHNIC", "ETHNIC2") %>%
+  is.na() %>%
+  colSums()
+```
+
+
+# Save
+
+```{r save}
+write.csv(
+  pheno_112_df,
+  file = file.path(process_dir, "Raw_Metadata_EPIC112.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  pheno_208_df,
+  file = file.path(process_dir, "Raw_Metadata_EPIC208.csv"),
+  row.names = FALSE
+)
+```
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r session}
+sessionInfo()
+```
+</details>

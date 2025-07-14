@@ -1,0 +1,241 @@
+---
+title: "Find overlap of significant CpGs and DMRs with eQTM study results"
+author: 
+  - David lukacsovich^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: lumen
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline    
+---
+
+# Set Up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r library}
+suppressMessages({
+  library(readr)
+  library(dplyr)
+  library(readxl)
+  library(rtracklayer)
+  library(liftOver)
+})
+
+base_dir <- "~/TBL Dropbox/David Lukacsovich"
+analysis_dir <- file.path(base_dir, "AD_CR_NOMAS")
+result_dir <- file.path(analysis_dir, "analysis-results")
+reference_dir <- file.path(analysis_dir, "data", "ref_files")
+save_dir <- file.path(result_dir, "external_comparison_analysis")
+read_dir <- file.path(result_dir, "robust_linear_model_adj_ancestry")
+```
+
+# Load Data
+
+## Load Significant Probes
+
+```{r load_signif}
+cpg_df <- read.csv(file = file.path(read_dir, "aha8_stats.csv")) %>%
+  dplyr::select(
+    "CpG",
+    chr = "Chr",
+    position = "Position",
+    "GREAT_annotation",
+    "Relation_to_Island"
+  )
+
+sig_df <- read.csv(file.path(save_dir, "mQTLs_inputs.csv")) %>%
+  dplyr::rename(CpG = "cpgs") %>%
+  dplyr::left_join(cpg_df, by = "CpG")
+```
+
+## Load eQTM Results
+
+```{r load_eqtm}
+fname <- file.path(
+  reference_dir,
+  "eQTm_FHS_array_ClinicalEpigenetics_13148_2021_1041_MOESM2_ESM.xlsx"
+)
+# R assumes that chromosomes are numeric, which throws an issue with XY chromosomes
+# so we manually have to define column types
+col_types <- c(
+  "text",
+  "text",
+  "numeric",
+  "numeric",
+  "numeric",
+  "text",
+  "numeric",
+  "text",
+  "numeric",
+  "numeric",
+  "text"
+)
+
+cis_df <- readxl::read_excel(
+  fname,
+  sheet = "Table S2",
+  skip = 1,
+  col_types = c("text", "text", "numeric", "numeric", "numeric", "text", "numeric", "text", "numeric", "numeric", "text")
+) %>%
+  as.data.frame() %>%
+  dplyr::select(
+    "CpG",
+    "GeneSymbol",
+    transcript_chr = "transcript-chromosome",
+    transcript_start = "transcript-start",
+    transcript_end = "transcript-end",
+    T_value = "T value",
+    "log10P"
+  ) %>%
+  dplyr::mutate(
+    transcript_chr = paste0("chr", .data$transcript_chr)
+  )
+trans_df <- readxl::read_excel(
+  fname,
+  sheet = "Table S3",
+  skip = 1,
+  col_types = c("text", "text", "numeric", "numeric", "numeric", "text", "numeric", "text", "numeric", "numeric", "text")
+) %>%
+  as.data.frame() %>%
+  dplyr::select(
+    "CpG",
+    "GeneSymbol",
+    transcript_chr = "transcript-chromosome",
+    transcript_start = "transcript-start",
+    transcript_end = "transcript-end",
+    T_value = "T value",
+    "log10P"
+  ) %>%
+  dplyr::mutate(
+    transcript_chr = paste0("chr", .data$transcript_chr)
+  )
+```
+
+## Convert to hg38
+
+```{r}
+convert_hg19_to_hg38 <- function(df) {
+  path = file.path(reference_dir, "hg19ToHg38.over.chain")
+  ch = rtracklayer::import.chain(path)
+  
+  df <- df %>%
+    dplyr::mutate(index = dplyr::row_number())
+  
+  gr <- df %>%
+    dplyr::select(
+      "index",
+      seqnames = "transcript_chr",
+      start = "transcript_start",
+      end = "transcript_end"
+    ) %>%
+    GenomicRanges::makeGRangesFromDataFrame(
+      keep.extra.columns = TRUE
+    )
+  
+  GenomeInfoDb::seqlevelsStyle(gr) = "UCSC"
+  df_38 <- gr %>%
+    rtracklayer::liftOver(ch) %>%
+    as.data.frame() %>%
+    dplyr::group_by(.data$index) %>%
+    dplyr::summarise(
+      transcript_chr = dplyr::first(.data$seqnames),
+      transcript_start = min(.data$start),
+      transcript_end = max(.data$end)
+    ) %>%
+    dplyr::ungroup()
+  
+  df <- df %>%
+    dplyr::select(
+      -"transcript_start",
+      -"transcript_end",
+      -"transcript_chr"
+    ) %>%
+    dplyr::left_join(df_38, by = "index") %>%
+    dplyr::select(-"index")
+  
+  df
+}
+
+cis_df <- convert_hg19_to_hg38(cis_df)
+trans_df <- convert_hg19_to_hg38(trans_df)
+```
+
+# Run Analysis
+
+## Get Overlaps
+
+```{r merge}
+cis_df <- sig_df %>%
+  dplyr::inner_join(cis_df, by = "CpG") %>%
+  dplyr::select(
+    "CpG",
+    "chr",
+    "position",
+    "GREAT_annotation",
+    "Relation_to_Island",
+    "GeneSymbol",
+    "transcript_chr",
+    "transcript_start",
+    "transcript_end",
+    "T_value",
+    "log10P",
+    "Sources"
+  )
+trans_df <- sig_df %>%
+  dplyr::inner_join(trans_df, by = "CpG") %>%
+  dplyr::select(
+    "CpG",
+    "chr",
+    "position",
+    "GREAT_annotation",
+    "Relation_to_Island",
+    "GeneSymbol",
+    "transcript_chr",
+    "transcript_start",
+    "transcript_end",
+    "T_value",
+    "log10P",
+    "Sources"
+  )
+```
+
+# Save
+
+```{r save}
+write.csv(
+  cis_df,
+  file = file.path(save_dir, "eQTM_Overlaps_cis.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  trans_df,
+  file = file.path(save_dir, "eQTM_Overlaps_trans.csv"),
+  row.names = FALSE
+)
+```
+
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r session}
+sessionInfo()
+```
+</details>

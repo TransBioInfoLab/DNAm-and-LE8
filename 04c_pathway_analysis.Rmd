@@ -1,0 +1,289 @@
+---
+title: "Run pathway analysis"
+subtitle: "Get significant KEGG and Reactome pathways based on linear analysis results"
+author: 
+  - David lukacsovich^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: lumen
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline    
+---
+
+# Set Up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r library}
+suppressMessages({
+  library(dplyr)
+  library(tidyr)
+  library(writexl)
+  library(methylGSA)
+  library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+})
+
+base_dir <- "~/TBL Dropbox/David Lukacsovich"
+analysis_dir <- file.path(base_dir, "AD_CR_NOMAS")
+data_dir <- file.path(analysis_dir, "data/DNAm/processed")
+result_dir <- file.path(analysis_dir, "analysis-results")
+ancestry_dir <- file.path(result_dir, "ancestry")
+reference_dir <- file.path(analysis_dir, "data/ref_files")
+```
+
+# Define Functions
+
+## Load Data
+
+```{r func_load}
+get_annotation_file <- function() {
+  anno_df <- read.csv(
+    file.path(reference_dir, "infinium-methylationepic-v-1-0-b5-manifest-file.csv"),
+    skip = 7
+  ) %>%
+    dplyr::select(
+      "Name",
+      "UCSC_RefGene_Name",
+      "UCSC_RefGene_Group"
+    ) %>%
+    dplyr::distinct()
+  
+  anno_df
+}
+
+get_analysis_results <- function(adjust_ancestry = TRUE) {
+  if (adjust_ancestry) {
+    save_dir <- file.path(result_dir, "robust_linear_model_adj_ancestry")
+  } else {
+    save_dir <- file.path(result_dir, "robust_linear_model")
+  }
+  
+  stats_df <- read.csv(file = file.path(save_dir, "aha8_stats.csv"))
+  
+  stats_df
+}
+```
+
+## Run methylRRA Analysis
+
+```{r func_methylrra}
+get_cpg_pathways <- function(cpg_ls, array.type = c("450K", "EPIC")) {
+  array.type <- match.arg(array.type)
+  
+  kegg_df <- methylGSA::methylRRA(
+    cpg.pval = cpg_ls,
+    array.type = "EPIC",
+    method = "GSEA",
+    GS.type = "KEGG",
+    minsize = 5,
+    maxsize = 200
+  ) %>%
+    dplyr::arrange(.data$pvalue) %>%
+    dplyr::mutate(method = "KEGG")
+  
+  react_df <- methylGSA::methylRRA(
+    cpg.pval = cpg_ls,
+    array.type = "EPIC",
+    method = "GSEA",
+    GS.type = "Reactome",
+    minsize = 5,
+    maxsize = 200
+  ) %>%
+    dplyr::arrange(.data$pvalue) %>%
+    dplyr::mutate(method = "Reactome")
+  
+  rbind(kegg_df, react_df)
+}
+
+get_stats_pathways <- function(stats_df, array.type = c("450K", "EPIC")) {
+  array.type <- match.arg(array.type)
+  
+  cpg_ls <- stats_df %>%
+    dplyr::pull("META_pvalue_fixed_bacon", name = "CpG")
+  
+  pathway_df <- get_cpg_pathways(cpg_ls, array.type = array.type)
+  
+  pathway_df
+}
+
+get_pathway_annotation <- function(pathway_df, anno_df) {
+  gene_df <- pathway_df %>%
+    dplyr::select("ID", "core_enrichment") %>%
+    tidyr::separate_rows("core_enrichment", sep = "/") %>%
+    dplyr::distinct() %>%
+    dplyr::rename(UCSC_RefGene_Name = "core_enrichment") %>%
+    dplyr::left_join(anno_df, by = "UCSC_RefGene_Name", relationship = "many-to-many") %>%
+    dplyr::distinct()
+  
+  gene_df
+}
+
+run_pathway_analysis <- function(
+    stats_df, anno_df, array.type = c("450K", "EPIC")
+) {
+  array.type <- match.arg(array.type)
+  
+  pathway_df <- get_stats_pathways(stats_df, array.type = array.type)
+  
+  gene_df <- get_pathway_annotation(pathway_df, anno_df)
+  
+  list(pathway_df = pathway_df, gene_df = gene_df)
+}
+```
+
+## Save Results
+
+```{r func_save}
+save_pathway_analysis <- function(pathway_df, adjust_ancestry = TRUE) {
+  if (adjust_ancestry) {
+    save_dir <- file.path(result_dir, "robust_linear_model_adj_ancestry")
+  } else {
+    save_dir <- file.path(result_dir, "robust_linear_model")
+  }
+  
+  writexl::write_xlsx(
+    list(KEGG = pathway_df %>%
+           dplyr::filter(.data$method == "KEGG") %>%
+           dplyr::select(-"method"),
+         Reactome = pathway_df %>%
+           dplyr::filter(.data$method == "Reactome") %>%
+           dplyr::select(-"method"),
+         Kegg_Genes = gene_df %>%
+           dplyr::filter(.data$ID %in% (
+             pathway_df %>% 
+               dplyr::filter(.data$method == "KEGG") %>%
+               dplyr::pull("ID")
+             )
+           ),
+         Reactome_Genes = gene_df %>%
+           dplyr::filter(.data$ID %in% (
+             pathway_df %>% 
+               dplyr::filter(.data$method == "Reactome") %>%
+               dplyr::pull("ID")
+             )
+           )
+         ),
+    file.path(save_dir, "methylGSA_pathway_analysis.xlsx")
+  )
+}
+```
+
+
+## Plot
+
+```{r func_plot}
+plot_pathway <- function(pathway_df, title, thresh_fdr = 0.05, ylim = 1e-5) {
+  
+  plot_df <- pathway_df %>%
+    dplyr::filter(.data$padj <= thresh_fdr) %>%
+    dplyr::mutate(logp = -log10(.data$pvalue)) %>%
+    dplyr::arrange(.data$pvalue) %>%
+    dplyr::mutate(
+      signif = ifelse(.data$padj < 0.05, "Significant", "Not_significant"),
+      ordering = dplyr::row_number(),
+      label = ifelse(nchar(.data$Description) < 80, .data$Description, .data$ID),
+      label = factor(.data$label, levels = .data$label)
+    )
+  
+  group.colors <- c(Significant = "#6496CD", Not_significant = "#D55E00")
+  
+  p <- ggplot2::ggplot(
+    plot_df, mapping = ggplot2::aes(x = label, y = logp, fill = signif)
+  ) +
+    ggplot2::geom_col( orientation = "x", width = 0.6) +
+    ggplot2::coord_flip() +
+    ggplot2::scale_y_continuous(
+      expand = c(0, 0),
+      limits = c(0, -log10(ylim)),
+      labels = function(x) sprintf("%.0f", x),
+      breaks = seq(0, -log10(ylim), by = 2)
+    ) +
+    ggplot2::scale_fill_manual(values = group.colors)
+    ggplot2::theme_classic() +
+    ggplot2::ylab(expression("-log"["10"]~"(p)")) + 
+    ggplot2::xlab("") + 
+    ggplot2::ggtitle(title) +
+    ggplot2::theme(
+      plot.margin = ggplot2::margin(0.5, 0.5, 0.5, 0.5, unit = "cm"),
+      plot.title = ggplot2::element_text(size = 15, face = "bold"),
+      strip.text.y = ggplot2::element_blank(),
+      strip.placement = "outside",
+      axis.title.x = ggplot2::element_text(
+        margin = ggplot2::margin(t = 0.5, b = 0.5, unit = "cm")
+      ),
+      axis.title.y = ggplot2::element_blank(),
+      axis.text = ggplot2::element_text(size = 10, color = "black"),
+      legend.position = "right",
+      panel.grid.major.y = ggplot2::element_blank(),
+      legend.title = ggplot2::element_blank()
+    )
+  
+  p
+}
+```
+
+# Run Analysis with Adjusted Ancestry
+
+## Load Data
+
+```{r analyze_load}
+anno_df <- get_annotation_file()
+stats_df <- get_analysis_results(adjust_ancestry = TRUE)
+```
+
+## Run Pathway Analysis
+
+```{r analyze_run}
+stats_res <- run_pathway_analysis(stats_df, anno_df, array.type = "EPIC")
+pathway_df <- stats_res$pathway_df
+gene_df <- stats_res$gene_df
+
+save_pathway_analysis(pathway_df, adjust_ancestry = TRUE)
+```
+
+## Plot KEGG
+
+```{r plot_kegg, fig.height = 4, fig.width = 12}
+plot_pathway(
+  pathway_df %>%
+    dplyr::filter(.data$method == "KEGG"),
+  title = "KEGG",
+  thresh_fdr = 0.20,
+  ylim = 1e-5
+)
+```
+
+## Plot Reactome
+
+```{r plot_reactome, fig.height = 6, fig.width = 12}
+plot_pathway(
+  pathway_df %>%
+    dplyr::filter(.data$method == "Reactome"),
+  title = "Reactome",
+  thresh_fdr = 0.1,
+  ylim = 1e-5
+)
+```
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r session}
+sessionInfo()
+```
+</details>

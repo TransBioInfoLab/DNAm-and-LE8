@@ -1,0 +1,238 @@
+---
+title: "Create a Manhattan Plot of analysis results"
+author: 
+  - David lukacsovich^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: lumen
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline    
+---
+
+# Set Up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r library}
+suppressMessages({
+  library(dplyr)
+  library(ggrastr)
+  library(ggplot2)
+  library(ggrepel)
+})
+
+base_dir <- "~/TBL Dropbox/David Lukacsovich"
+analysis_dir <- file.path(base_dir, "AD_CR_NOMAS")
+result_dir <- file.path(analysis_dir, "analysis-results")
+save_dir <- file.path(result_dir, "external_comparison_analysis")
+read_dir <- file.path(result_dir, "robust_linear_model_adj_ancestry")
+```
+
+# Define Functions
+
+## Get Data
+
+```{r func_load}
+get_first_gene <- function(genes) {
+  if (nchar(genes) < 2) {
+    return(genes)
+  }
+  genes <- stringr::str_split_1(genes, pattern = ";")
+  
+  genes[[1]]
+}
+
+get_genes <- function(genes_ls) {
+  unname(sapply(genes_ls, FUN = get_first_gene))
+}
+
+read_stats <- function() {
+  cpg_df <- read.csv(file = file.path(read_dir, "aha8_stats.csv"))
+  cpg_df$gene <- get_genes(cpg_df$UCSC_RefGene_Name)
+  
+  cpg_df %>%
+    dplyr::filter(.data$CrossHybridize == 0, .data$nearSNP == 0) %>%
+    dplyr::select(
+      "gene",
+      cpg = "CpG",
+      chr = "Chr",
+      position = "Position",
+      pvalue = "META_pvalue_fixed_bacon"
+    ) %>%
+    dplyr::mutate(
+      plog = -log10(.data$pvalue),
+      chr = as.integer(stringr::str_remove(.data$chr, "chr"))
+    )
+}
+```
+
+## Create Manhattan Plot
+
+```{r func_manhattan}
+prepare_manhattan <- function(cpg_df, key_genes) {
+  annotate_df <- cpg_df %>%
+    dplyr::filter(.data$gene %in% key_genes) %>%
+    dplyr::arrange(dplyr::desc(.data$plog)) %>%
+    dplyr::group_by(.data$gene) %>%
+    dplyr::filter(dplyr::row_number() == 1) %>%
+    dplyr::ungroup() %>%
+    dplyr::select("gene", "cpg") %>%
+    dplyr::mutate(is_annotate = "yes")
+  
+  plot_df <- cpg_df %>%
+    dplyr::group_by(.data$chr) %>%
+    dplyr::summarise(chr_len = max(.data$position)) %>%
+    dplyr::mutate(tot = cumsum(as.numeric(.data$chr_len)) - .data$chr_len) %>%
+    dplyr::select(-"chr_len") %>%
+    dplyr::left_join(cpg_df, by = "chr") %>%
+    dplyr::arrange(.data$chr, .data$position) %>%
+    dplyr::mutate(
+      pos_tot = .data$position + .data$tot
+    ) %>%
+    dplyr::left_join(annotate_df, by = c("gene", "cpg")) %>%
+    dplyr::mutate(is_highlight = ifelse(.data$plog >= 5, "yes", "no")) %>%
+    tidyr::replace_na(list(is_highlight = "no", is_annotate = "no"))
+  
+  plot_df
+}
+
+prepare_xaxis <- function(plot_df) {
+  axis_df <- plot_df %>%
+    dplyr::group_by(.data$chr) %>%
+    dplyr::summarize(center = (max(.data$pos_tot) + min(.data$pos_tot)) / 2)
+  
+  axis_df
+}
+
+create_plot <- function(plot_df, axis_df) {
+  ggplot2::ggplot(plot_df, mapping = ggplot2::aes(x = pos_tot, y= plog)) +
+    ggplot2::geom_point(
+      mapping = ggplot2::aes(color = as.factor(chr)),
+      alpha = 0.8,
+      size = 0.5
+    ) +
+    ggplot2::scale_color_manual(values = rep(c("black", "grey"), 22)) +
+    ggplot2::scale_x_continuous(
+      label = axis_df$chr,
+      breaks = axis_df$center,
+      expand = c(0.01, 0.01)
+    ) +
+    # ggplut2::guides(point = FALSE) +
+    ggplot2::scale_y_continuous(
+      expand = c(0, 0),
+      #limits = c(0, max(plot_df$plog + 0.2))
+      limits = c(0,10)
+    ) +
+    ggplot2::geom_point(
+      data = subset(plot_df, is_highlight == "yes"),
+      color = "red",
+      size = 1
+    ) +
+    ggplot2::geom_point(
+      data = subset(plot_df, is_highlight == "no" & is_annotate == "yes"),
+      color = "blue",
+      size = 1
+    ) +
+    ggrepel::geom_label_repel(
+      data = subset(plot_df, is_annotate == "yes"),
+      mapping = ggplot2::aes(label = gene),
+      size = 3
+    ) +
+    ggplot2::xlab("Chromosome") +
+    ggplot2::ylab(bquote(-log[10](pValue))) +
+    # ggplot2::geom_hline(
+    #   yintercept = 5, color = "red"
+    # ) +
+    # ggplot2::annotate(
+    #   "text", 
+    #   x = axis_df$center[7],
+    #   y = -log10(1.2e-8),
+    #   label = expression(paste("pValue < ", 1 %*% 10^-5))
+    # ) +
+    # ggplot2::annotate(
+    #   "segment",
+    #   x = 0.2 * axis_df$center[4] + .8 * axis_df$center[5],
+    #   xend = 0.6 * axis_df$center[5] + .4 * axis_df$center[6],
+    #   y = -log10(1.3e-8),
+    #   yend = -log10(1.3e-8),
+    #   colour = "red"
+    # ) + 
+    ggplot2::theme_classic() +
+    ggplot2::theme(
+      legend.position = "none",
+      axis.text = ggplot2::element_text(size = 7)
+    )
+}
+```
+
+# Create Plot
+
+## Get Data
+
+```{r load}
+cpg_df <- read_stats()
+```
+
+## Prepare Data
+
+```{r prepare}
+key_genes <- c(
+  "ZNF621",
+  "PF4",
+  "ABCA1",
+  "MAP3K13",
+  "BANP",
+  "IPO13",
+  "GALNS",
+  "ANAPC11",
+  "STIP1",
+  "ANO4",
+  "EIF4E",
+  "CDH5",
+  "ACY3",
+  "CD300A",
+  "HOXA5",
+  "TSPAN32"
+)
+plot_df <- prepare_manhattan(cpg_df, key_genes)
+axis_df <- prepare_xaxis(plot_df)
+```
+
+## Plot
+
+```{r plot}
+p <- create_plot(plot_df, axis_df)
+p
+```
+
+# Save
+
+```{r save}
+pdf(file = file.path(read_dir, "manhattan_plot.pdf"), width = 9, height = 6)
+ggrastr::rasterize(p, layers = 'Point', dpi = 300)
+dev.off()
+```
+
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r session}
+sessionInfo()
+```
+</details>

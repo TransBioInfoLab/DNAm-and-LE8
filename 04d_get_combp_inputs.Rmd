@@ -1,0 +1,83 @@
+---
+title: "Get inputs for combp analysis"
+author: 
+  - David lukacsovich^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: lumen
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline    
+---
+
+# Set Up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r library}
+suppressMessages({
+  library(dplyr)
+})
+
+base_dir <- "~/TBL Dropbox/David Lukacsovich"
+analysis_dir <- file.path(base_dir, "AD_CR_NOMAS")
+result_dir <- file.path(analysis_dir, "analysis-results")
+```
+
+# Load Data
+
+```{r load}
+save_dir <- file.path(result_dir, "robust_linear_model_adj_ancestry")
+stats_df <- read.csv(file = file.path(save_dir, "aha8_stats.csv"))
+```
+
+# Get Target Columns
+
+```{r filter}
+chr_df <- stats_df %>%
+  dplyr::select(
+    chr = "Chr",
+    start = "Position",
+    pValue = "META_pvalue_fixed_bacon"
+  ) %>%
+  dplyr::arrange(.data$pValue) %>%
+  dplyr::group_by(.data$chr, .data$start) %>%
+  dplyr::filter(dplyr::row_number() == 1) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(end = .data$start + 1) %>%
+  dplyr::select("chr", "start", "end", "pValue")
+
+table(chr_df$chr)
+```
+
+# Save
+
+```{r save}
+write.csv(
+  chr_df,
+  file = file.path(save_dir, "aha8_combp_inputs.csv"),
+  row.names = FALSE
+)
+```
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r session}
+sessionInfo()
+```
+</details>

@@ -1,0 +1,97 @@
+---
+title: "Check Annotating stats file"
+author: 
+  - David lukacsovich^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: lumen
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline    
+---
+
+# Set Up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r library}
+suppressMessages({
+  library(dplyr)
+  library(SummarizedExperiment)
+})
+
+base_dir <- "~/TBL Dropbox/David Lukacsovich"
+analysis_dir <- file.path(base_dir, "AD_CR_NOMAS")
+data_dir <- file.path(analysis_dir, "data/DNAm/processed")
+result_dir <- file.path(analysis_dir, "analysis-results")
+ancestry_dir <- file.path(result_dir, "ancestry")
+aha8_dir <- file.path(result_dir, "robust_linear_model_adj_ancestry")
+```
+
+# Get Data
+
+```{r}
+dnam_112_data <- readRDS(file.path(data_dir, "EPIC112_aha8.RDS"))
+dnam_208_data <- readRDS(file.path(data_dir, "EPIC208_aha8.RDS"))
+stats_df <- read.csv(file.path(aha8_dir, "aha8_stats.csv"))
+```
+
+# Filter to Key Targets
+
+```{r}
+stats_df <- stats_df %>%
+  dplyr::filter(.data$EPIC112_pvalue < 0.05 | .data$EPIC208_pvalue < 0.05)
+```
+
+# Get Key Statistics
+
+```{r}
+stats_df$EPIC112_mean <- rowMeans(
+  SummarizedExperiment::assays(dnam_112_data)$dnam[stats_df$CpG,]
+)
+stats_df$EPIC112_std <- apply(
+  SummarizedExperiment::assays(dnam_112_data)$dnam[stats_df$CpG,],
+  MARGIN = 1,
+  FUN = stats::sd
+)
+stats_df$EPIC208_mean <- rowMeans(
+  SummarizedExperiment::assays(dnam_208_data)$dnam[stats_df$CpG,]
+)
+stats_df$EPIC208_std <- apply(
+  SummarizedExperiment::assays(dnam_208_data)$dnam[stats_df$CpG,],
+  MARGIN = 1,
+  FUN = stats::sd
+)
+```
+
+# Save
+
+```{r}
+write.csv(
+  stats_df,
+  file = file.path(aha8_dir, "aha8_stats_filtered.csv"),
+  row.names = FALSE
+)
+```
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r session}
+sessionInfo()
+```
+</details>

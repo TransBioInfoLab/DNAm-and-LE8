@@ -1,0 +1,232 @@
+---
+title: "Get a table of significant probes and DMRs"
+author: 
+  - David lukacsovich^[University of Miami]
+  - Lily Wang^[University of Miami]
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    theme: lumen
+    toc: true
+    number_sections: true
+    df_print: paged
+    code_download: false
+    toc_float:
+      collapsed: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline    
+---
+
+# Set Up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r library}
+suppressMessages({
+  library(readr)
+  library(dplyr)
+})
+
+base_dir <- "~/TBL Dropbox/David Lukacsovich"
+analysis_dir <- file.path(base_dir, "AD_CR_NOMAS")
+result_dir <- file.path(analysis_dir, "analysis-results")
+
+miami_dir <- file.path(base_dir, "Database-AD-analysis-results")
+data_dir <- file.path(miami_dir, 'Reference Data')
+study_dir <- file.path(miami_dir, 'Reference Data', 'Summary')
+pheno_dir <- file.path(miami_dir, "code", "MIAMI.AD", "inst", "shiny", "Data", "Tables")
+```
+
+# Get Key Probes
+
+## Load Statistics
+
+```{r laod}
+save_dir <- file.path(result_dir, "robust_linear_model_adj_ancestry")
+stats_df <- read.csv(file = file.path(save_dir, "aha8_stats.csv"))
+dmr_df <- read.csv(file.path(save_dir, "combp_results_annotated.csv"))
+```
+
+## Get Target Probes
+
+```{r get_sig}
+cpg_ls <- stats_df %>%
+  dplyr::filter(.data$CrossHybridize == 0, .data$nearSNP == 0) %>%
+  dplyr::filter(.data$META_pvalue_fixed_bacon < 1e-5) %>%
+  dplyr::pull("CpG")
+
+dmr_ls <- dmr_df %>%
+  dplyr::filter(.data$pValue < 1e-5) %>%
+  dplyr::pull("combp_probes") %>%
+  stringr::str_split(",") %>%
+  unlist() %>%
+  unique()
+
+all_ls <- unique(c(cpg_ls, dmr_ls))
+
+sig_df <- data.frame(
+  cpgs = all_ls,
+  Sources = ""
+) %>%
+  dplyr::mutate(
+    Sources = ifelse(.data$cpgs %in% cpg_ls, "individual CpG", .data$Sources),
+    Sources = ifelse(.data$cpgs %in% dmr_ls, "CpG in DMR", .data$Sources),
+    Sources = ifelse(.data$cpgs %in% dmr_ls & .data$cpgs %in% cpg_ls, "individual CpG + CpG in DMR", .data$Sources)
+  )
+```
+
+# Get MIAMI-AD Comparison
+
+## Get Phenotype Information
+
+```{r get_pheno}
+target_pheno <- c(
+  "AD Biomarkers",
+  "AD Neuropathology",
+  "Dementia Clinical Diagnosis",
+  "Mild Cognitive Impairment (MCI)"
+)
+
+pheno_df <- readRDS(file.path(pheno_dir, "Study_Legends.RDS")) %>%
+  dplyr::select(
+  dataset = "Dataset",
+  cohort = "Source",
+  phenotype = "Phenotype",
+  sex_specific = "Sex_Specific",
+  statistics = "Statistics",
+  "Description",
+  "Author",
+  "Year",
+  "PMID"
+) %>%
+  # dplyr::filter(
+  #   stringr::str_detect(.data$description, "brain") |
+  #     stringr::str_detect(.data$description, "Brain")
+  # ) %>%
+  dplyr::distinct() %>%
+  dplyr::filter(.data$phenotype %in% target_pheno)
+```
+
+## Get Probe Statistics
+
+```{r get_expression}
+data_file <- file.path(study_dir, "CpG Statistics.csv")
+feature_stats_df <- readr::read_csv(data_file, show_col_types = FALSE) %>%
+  dplyr::mutate(statistics_value = signif(statistics_value, digits = 5)) %>%
+  dplyr::select(
+    "cpg",
+    "dataset",
+    cohort = "sample_group",
+    "direction",
+    "statistics_value",
+    "pvalue"
+  )
+
+feature_stats_df <- pheno_df %>%
+  dplyr::left_join(
+    feature_stats_df,
+    by = c("dataset", "cohort"),
+    relationship = "many-to-many"
+  ) %>%
+  dplyr::filter(!is.na(.data$pvalue)) %>%
+  dplyr::select(
+    "cpg",
+    "dataset",
+    "cohort",
+    "phenotype",
+    "sex_specific",
+    "statistics",
+    "direction",
+    "statistics_value",
+    "pvalue",
+    "Description",
+    "Author",
+    "Year",
+    "PMID"
+  )
+```
+
+## Get Probe Metadata
+
+```{r get_metadata}
+meta_df <- stats_df %>%
+  dplyr::select(
+    cpg = "CpG",
+    chr = "Chr",
+    position = "Position",
+    "GREAT_annotation",
+    estimate = "META_estimate_bacon",
+    stdErr = "META_standard_error_bacon",
+    pValue = "META_pvalue_fixed_bacon",
+    Direction = "META_direction_bacon"
+  ) %>%
+  dplyr::right_join(sig_df, by = c("cpg" = "cpgs"))
+
+miami_df <- meta_df %>%
+  dplyr::left_join(feature_stats_df, by = "cpg")
+```
+
+## Get Blood Brain Validation
+
+```{r bb_validation}
+signif_threshold <- 0.05
+
+cpg_blood <- miami_df %>%
+  dplyr::filter(
+    stringr::str_detect(.data$Description, "Blood") |
+      stringr::str_detect(.data$Description, "blood")
+  ) %>%
+  dplyr::filter(.data$pvalue < signif_threshold) %>%
+  dplyr::pull("cpg") %>%
+  unique()
+
+cpg_brain <- miami_df %>%
+  dplyr::filter(
+    stringr::str_detect(.data$Description, "Brain") |
+      stringr::str_detect(.data$Description, "brain")
+  ) %>%
+  dplyr::filter(.data$pvalue < signif_threshold) %>%
+  dplyr::pull("cpg") %>%
+  unique()
+
+miami_df <- miami_df %>%
+  dplyr::mutate(
+    brain = .data$cpg %in% cpg_brain,
+    blood = .data$cpg %in% cpg_blood,
+    `both blood and brain` = .data$brain & .data$blood
+  )
+```
+
+
+# Save Results
+
+```{r save}
+save_dir <- file.path(result_dir, "external_comparison_analysis")
+write.csv(
+  sig_df,
+  file = file.path(save_dir, "mQTLs_inputs.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  miami_df,
+  file = file.path(save_dir, "DNAm_External_Significance.csv"),
+  row.names = FALSE
+)
+```
+
+
+# Session Information
+
+<details>
+  <summary>**Session Info**</summary>
+```{r session}
+sessionInfo()
+```
+</details>
