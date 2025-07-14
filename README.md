@@ -31,12 +31,6 @@ We found DNA methylation biomarkers derived from LE8 scores have significant rol
 
 ### Code Overview
 
-**0. Collect Phenotype Information**
-
-| File                                | Link                                                         |
-| ----------------------------------- | ------------------------------------------------------------ |
-| 00_get_phenotypes.Rmd               | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/analysis/00_get_phenotypes.Rmd) |
-
 **1. Preprocess YR2021 Data**
 
 | File                                | Link                                                         |
@@ -67,7 +61,7 @@ We found DNA methylation biomarkers derived from LE8 scores have significant rol
 
 | File                           | Link                                                         |
 | ------------------------------ | ------------------------------------------------------------ |
-| 04a_prepare_training_data.Rmd  | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/analysis/04a_prepare_training_data.Rmd) |
+| 04a_prepare_data.Rmd           | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/analysis/04a_prepare_training_data.Rmd) |
 | 04b_fit_robust_model.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/analysis/04b_fit_robust_model.Rmd)      |
 | 04c_pathway_analysis.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/analysis/04c_pathway_analysis.Rmd)      |
 | 04d_get_combp_inputs.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/analysis/04d_get_combp_inputs.Rmd)      |
