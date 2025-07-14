@@ -41,21 +41,21 @@ We found DNA methylation biomarkers derived from LE8 scores have significant rol
 
 | File                                | Link                                                         |
 | ----------------------------------- | ------------------------------------------------------------ |
-| 01a_get_data_EPIC112.Rmd            | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01a_get_data_EPIC112.Rmd) |
-| 01b_filter_probes_EPIC112.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01b_filter_probes_EPIC112.Rmd) |
-| 01c_impute_autosomal_EPIC112.Rmd    | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01c_impute_autsomal_EPIC112.Rmd) |
+| 01a_get_data_EPIC112.Rmd            | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01a_get_data_EPIC112.Rmd)            |
+| 01b_filter_probes_EPIC112.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01b_filter_probes_EPIC112.Rmd)       |
+| 01c_impute_autosomal_EPIC112.Rmd    | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01c_impute_autsomal_EPIC112.Rmd)     |
 | 01d_normalize_autosomal_EPIC112.Rmd | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01d_normalize_autosomal_EPIC112.Rmd) |
-| 01e_pca_autosomal_EPIC112.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01e_pca_autosomal_EPIC112.Rmd) |
+| 01e_pca_autosomal_EPIC112.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01e_pca_autosomal_EPIC112.Rmd)       |
 
 **2. Preprocess YR2019 Data**
 
 | File                                | Link                                                         |
 | ----------------------------------- | ------------------------------------------------------------ |
-| 02a_get_data_EPIC208.Rmd            | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/02a_get_data_EPIC208.Rmd) |
-| 02b_filter_probes_EPIC208.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/02b_filter_probes_EPIC208.Rmd) |
-| 02c_impute_autosomal_EPIC208.Rmd    | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/02c_impute_autsomal_EPIC208.Rmd) |
+| 02a_get_data_EPIC208.Rmd            | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/02a_get_data_EPIC208.Rmd)            |
+| 02b_filter_probes_EPIC208.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/02b_filter_probes_EPIC208.Rmd)       |
+| 02c_impute_autosomal_EPIC208.Rmd    | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/02c_impute_autsomal_EPIC208.Rmd)     |
 | 02d_normalize_autosomal_EPIC208.Rmd | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/02d_normalize_autosomal_EPIC208.Rmd) |
-| 02e_pca_autosomal_EPIC208.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/02e_pca_autosomal_EPIC208.Rmd) |
+| 02e_pca_autosomal_EPIC208.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/02e_pca_autosomal_EPIC208.Rmd)       |
 
 **3. Batch Correct Data**
 
@@ -68,7 +68,23 @@ We found DNA methylation biomarkers derived from LE8 scores have significant rol
 | File                           | Link                                                         |
 | ------------------------------ | ------------------------------------------------------------ |
 | 04a_prepare_training_data.Rmd  | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/04a_prepare_training_data.Rmd) |
-| 04b_fit_robust_model.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/04b_fit_robust_model.Rmd) |
-| 04c_pathway_analysis.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/04c_pathway_analysis.Rmd) |
-| 04d_get_combp_inputs.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/04d_get_combp_inputs.Rmd) |
-| 04e_annotate_combp.Rmd         | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/04e_annotate_combp.Rmd)   |
+| 04b_fit_robust_model.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/04b_fit_robust_model.Rmd)      |
+| 04c_pathway_analysis.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/04c_pathway_analysis.Rmd)      |
+| 04d_get_combp_inputs.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/04d_get_combp_inputs.Rmd)      |
+| 04e_annotate_combp.Rmd         | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/04e_annotate_combp.Rmd)        |
+
+**5. Compare to Prior Studies**
+
+| File                            | Link                                                         |
+| ------------------------------- | ------------------------------------------------------------ |
+| 05a_get_signif_list.Rmd         | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/05a_get_signif_list.Rmd)         |
+| 05b_brain_blood_correlation.Rmd | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/05b_brain_blood_correlation.Rmd) |
+| 05c_eQTM_association.Rmd        | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/05c_eQTM_association.Rmd)        |
+| 05d_manhattan_plot.Rmd          | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/05d_manhattan_plot.Rmd)          |
+| 05e_reannot.Rmd                 | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/05e_reannot.Rmd)                 |
+
+**Utility Functions**
+
+| File                            | Link                                                         |
+| ------------------------------- | ------------------------------------------------------------ |
+| 05a_get_signif_list.Rmd         | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/05a_get_signif_list.Rmd)         |
