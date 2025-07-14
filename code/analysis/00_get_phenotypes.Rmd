@@ -51,16 +51,8 @@ clinical_df <- read.csv(
 ) %>%
   dplyr::select(
     ID = "record_id",
-    "np1date",
-    "np1age",
     "raceth",
-    "isex",
-    "edu", 
-    "mme1date",
-    "mmetot_1",
-    "np2age",
-    "mme2date",
-    "mmetot_2"
+    "isex"
   ) %>%
   dplyr::mutate(ID = as.character(.data$ID))
 ```
@@ -104,36 +96,13 @@ smoke_df <- read.csv(file.path(raw_dir, "main columbia server/rfa.csv")) %>%
   dplyr::mutate(ID = as.character(.data$ID))
 ```
 
-## Dementia
-
-```{r}
-dementia_df <- read.csv(
-  file.path(
-    raw_dir,
-    "dementia adjudication/all visit dementia adjudication findings",
-    "nomas_memory.csv"
-  )
-) %>%
-  dplyr::select(
-    "ID", 
-    "np1_cogdx",
-    "postMRIcogdxdate",
-    "postMRIcogdx",
-    "incident_dementia_date",
-    "incident_dementia",
-    "tt_dementia",
-  ) %>% 
-  dplyr::mutate(ID = as.character(.data$ID))
-```
-
 ## Merge
 
 ```{r}
 pheno_df <- clinical_df %>%
   dplyr::left_join(bds_df, by = "ID") %>%
   dplyr::left_join(apoe_df, by = "ID") %>%
-  dplyr::left_join(smoke_df, by = "ID") %>%
-  dplyr::left_join(dementia_df, by = "ID")
+  dplyr::left_join(smoke_df, by = "ID")
 ```
 
 # Get Scores
@@ -150,21 +119,9 @@ le8_df <- readxl::read_excel(
     aha8_pa = "new_aha8_pa"
   ) %>%
   dplyr::mutate(ID = as.character(.data$ID))
-```
 
-##LS7
-
-```{r}
-ls7_df <- read.csv(file.path(raw_dir, "ls7 le8/icvh.csv")) %>% 
-  dplyr::mutate(ID = as.character(.data$ID))
-```
-
-## Merge
-
-```{r}
 pheno_df <- pheno_df %>%
-  dplyr::left_join(le8_df, by = "ID") %>%
-  dplyr::left_join(ls7_df, by = "ID")
+  dplyr::left_join(le8_df, by = "ID")
 ```
 
 # Get Household Information
@@ -185,15 +142,6 @@ pheno_df <- pheno_df %>%
     Hispanic = ifelse(.data$ETHNIC == 1, 1, 0)
   )
 ```
-
-```{r}
-pheno_df$test <- pheno_df$isex
-pheno_df$test[c(10, 100, 250, 500, 750)] <- NA
-
-test_df <- pheno_df %>%
-  dplyr::mutate(Gender = ifelse(.data$test == 0, "M", "F"))
-```
-
 
 # Get Dataset Information
 
