@@ -28,3 +28,32 @@ Adjusting for age, sex, APOE ε4, major immune cell proportions, genetic ancestr
 **Conclusions**
 
 We found DNA methylation biomarkers derived from LE8 scores have significant roles in dementia, highlighting actionable targets for dementia prevention. Moreover, these biomarkers show strong clinical potential as objective measures to identify individuals at elevated risk, stratify participants based on biologically informed risk profiles, and monitor epigenetic responses to lifestyle interventions in secondary prevention trials aimed at reducing dementia risk. Future studies in larger and more diverse cohorts are needed to validate and refine these biomarkers for clinical applications. 
+
+### Code Overview
+
+**0. Collect Phenotype Information**
+
+| File                                | Link                                                         |
+| ----------------------------------- | ------------------------------------------------------------ |
+| 00_get_phenotypes.Rmd               | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/00_get_phenotypes.Rmd) |
+
+**1. Preprocess YR2021 Data**
+
+| File                                | Link                                                         |
+| ----------------------------------- | ------------------------------------------------------------ |
+| 01a_get_data_EPIC112.Rmd            | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01a_get_data_EPIC112.Rmd) |
+| 01b_filter_probes_EPIC112.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01a_filter_probes_EPIC112.Rmd) |
+| 01c_impute_autosomal_EPIC112.Rmd    | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01a_impute_autsomal_EPIC112.Rmd) |
+| 01d_normalize_autosomal_EPIC112.Rmd | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01a_normalize_autosomal_EPIC112.Rmd) |
+| 013_pca_autosomal_EPIC112.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01a_pca_autosomal_EPIC112.Rmd) |
+
+**2. Preprocess YR2019 Data**
+
+| File                                | Link                                                         |
+| ----------------------------------- | ------------------------------------------------------------ |
+| 01a_get_data_EPIC208.Rmd            | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01a_get_data_EPIC208.Rmd) |
+| 01b_filter_probes_EPIC208.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01a_filter_probes_EPIC208.Rmd) |
+| 01c_impute_autosomal_EPIC208.Rmd    | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01a_impute_autsomal_EPIC208.Rmd) |
+| 01d_normalize_autosomal_EPIC208.Rmd | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01a_normalize_autosomal_EPIC208.Rmd) |
+| 013_pca_autosomal_EPIC208.Rmd       | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/01a_pca_autosomal_EPIC208.Rmd) |
+
