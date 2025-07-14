@@ -73,8 +73,6 @@ bds_df <- read.csv(
 ) %>%
   dplyr::select(
     "ID", 
-    baselineDate = "BDATE", # blood sample collection date
-    birthDate = "B1DATE", # birthday
     age_at_visit = "AGE",
     "RACE",
     "ETHNIC"
