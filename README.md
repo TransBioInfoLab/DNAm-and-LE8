@@ -84,10 +84,3 @@ We found DNA methylation biomarkers derived from LE8 scores have significant rol
 | detectionp_functions.R  | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/functions/detectionp_functions.R)  |
 | run_parallel.R          | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/functions/run_parallel.R)          |
 | run_pca.R               | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/functions/run_pca.R)               |
-
-**External Functions**
-The chronological age predictor code is replicated, as the code had to be modified to run as a function instead of a terminal command. The original code is found [here](https://github.com/qzhang314/DNAm-based-age-predictor).
-
-| File                    | Link                                                         |
-| ----------------------- | ------------------------------------------------------------ |
-| pred_adjusted.R         | [Link to the script](https://github.com/TransBioInfoLab/DNAm-and-LE8/blob/main/code/DNAm-based-age-predictor-master/pred_adjusted.R)  |
